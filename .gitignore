@@ -1,22 +1,33 @@
-# Virtual environments
-venv*/
-env/
-
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+*.egg
+.eggs/
 
-# Data & Models
-data/demonstrations/
-models/*.pth
-*.motion
-
-# Secrets
+# Virtual environments
+venv/
+env/
 .env
+
+# Data and models (too large for git)
+data/
+models/
+*.hdf5
+*.pth
+*.pt
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
 
 # Logs
 *.log
 logs/
 
-# OS
-.DS_Store
+# Robomimic outputs
+bc_trained_models/
+tests/tmp_model_dir/
