@@ -1,4 +1,4 @@
-import panda_pyh
+import panda_py
 import panda_py.controllers
 import h5py
 import numpy as np
