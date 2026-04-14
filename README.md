@@ -9,7 +9,7 @@ Bachelor thesis: Multi-task learning for Franka Emika robot using behavioral clo
 - Redis
 
 ## Project Structure
-- `src/learning/` - BC and context-aware BC implementations
+- `src/learning/` - BC implementations
 - `src/robot_control/` - Robot interface code
 - `demos/` - Demo scripts
 - `data/` - Collected demonstrations
