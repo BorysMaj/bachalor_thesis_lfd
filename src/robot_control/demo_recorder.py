@@ -4,6 +4,7 @@ import h5py
 import numpy as np
 import time
 import json
+from scipy.spatial.transform import Rotation
 
 class KinestheticDemoRecorder:
     """
@@ -64,7 +65,7 @@ class KinestheticDemoRecorder:
         # Observations
         q = np.array(state.q) # Joint angles
         eef_pos = np.array(state.O_T_EE[12:15]) # XYZ from transform matrix
-        eef_quat = self._matrix_to_quat(state.O_T_EE) # Orientation
+        eef_quat = self.mat2quat(state.O_T_EE) # Orientation
         gripper = np.array([state.gripper_width, 0.0])
 
         self.current_demo["obs"]["robot0_joint_pos"].append(q)
@@ -132,21 +133,12 @@ class KinestheticDemoRecorder:
             mg.create_dataset("train", data=np.array(names[:split],  dtype="S"))
             mg.create_dataset("valid", data=np.array(names[split:],  dtype="S"))
 
-        print(f"Saved {len(self.demos)} demos → {path}")
+        print(f"Saved {len(self.demos)} demos to {path}")
 
 
 
-    def _matrix_to_quat(self, T_flat):
-        """Extract quaternion from flat 4x4 column-major transform."""
-        R = np.array(T_flat[:9]).reshape(3, 3, order='F')
-        trace = R.trace()
-        if trace > 0:
-            t = 0.5 / np.sqrt(trace + 1.0)
-            return np.array([(R[2,1]-R[1,2])*t,
-                             (R[0,2]-R[2,0])*t,
-                             (R[1,0]-R[0,1])*t,
-                             0.25/t])
-        return np.array([0., 0., 0., 1.])
+    def mat2quat(self, pose):
+        return Rotation.from_matrix(pose[:3, :3]).as_quat()  # [x, y, z, w]
 
     def move_to_home(self):
         self.panda.move_to_start()
