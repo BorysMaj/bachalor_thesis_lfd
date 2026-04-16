@@ -125,14 +125,6 @@ class KinestheticDemoRecorder:
                 for k, v in demo["obs"].items():
                     og.create_dataset(k, data=v)
 
-            # train/val split
-            n = len(self.demos)
-            names = [f"demo_{i}" for i in range(n)]
-            split = int(n * 0.8) # 80% train, 20% validation
-            mg = f.create_group("mask")
-            mg.create_dataset("train", data=np.array(names[:split],  dtype="S"))
-            mg.create_dataset("valid", data=np.array(names[split:],  dtype="S"))
-
         print(f"Saved {len(self.demos)} demos to {path}")
 
 
