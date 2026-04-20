@@ -1,4 +1,3 @@
-
 import torch
 import numpy as np
 import panda_py
@@ -7,16 +6,15 @@ import time
 import sys
 import os
 from scipy.spatial.transform import Rotation
-
 import robomimic.utils.file_utils as FileUtils
 import robomimic.utils.torch_utils as TorchUtils
 
-ROBOT_IP    = "172.16.0.2"
-POLICY_PATH = "/home/borys/Desktop/bachalor_thesis_lfd/models/wave/wave_bc/20260417152510/models/model_epoch_200.pth"
-HORIZON     = 200
-HZ          = 20
-DT          = 1.0 / HZ
-ACTION_SCALE = 0.15 # Scaling for safety
+ROBOT_IP     = "172.16.0.2"
+POLICY_PATH  = "/home/borys/Desktop/bachalor_thesis_lfd/models/wave/wave_bc/20260417152510/models/model_epoch_200.pth"
+HORIZON      = 200
+HZ           = 20
+DT           = 1.0 / HZ
+ACTION_SCALE = 0.15  # Scaling for safety
 
 
 def get_obs(state):
@@ -44,12 +42,12 @@ def main():
         verbose=True
     )
     policy.start_episode()
-    print("Policy loaded!")
+    print("Policy loaded")
 
     # Connect
-    print(f"\nConnecting to Franka at {ROBOT_IP}...")
+    print(f"\nConnecting to Franka at {ROBOT_IP}")
     panda = panda_py.Panda(ROBOT_IP)
-    print("Connected!")
+    print("Connected")
 
     # Go home
     print("Moving home.")
@@ -57,65 +55,57 @@ def main():
 
     input("\nPress Enter to start execution.")
 
-    # ── rollout ───────────────────────────────────────────
-    print(f"Running policy for {HORIZON} steps at {HZ}Hz...")
-    print("Press Ctrl+C to stop.\n")
+    # Running policy
+    print(f"Running policy for {HORIZON} steps at {HZ}Hz")
+    print("Press Ctrl+C to stop")
+
+    # Cartesian impedance controller
+    controller = panda_py.controllers.CartesianImpedance()
 
     try:
-        for step in range(HORIZON):
-            t_start = time.time()
+        with panda.create_context(frequency=HZ, max_runtime=HORIZON / HZ) as ctx:
+            while ctx.ok():
+                # Get state
+                state = panda.get_state()
+                obs   = get_obs(state)
 
-            # Get state
-            state = panda.get_state()
-            obs   = get_obs(state)
+                # Get action from policy
+                with torch.no_grad():
+                    action = policy(obs)
+                action = np.array(action).flatten()  # (7,)
 
-            # Get action from policy
-            with torch.no_grad():
-                action = policy(obs)
-            action = np.array(action).flatten()  # (7,)
+                delta_pos = action[:3] * ACTION_SCALE
+                delta_ori = action[3:6] * ACTION_SCALE
+                # action[6] = gripper to be added
 
-            delta_pos = action[:3] * ACTION_SCALE
-            # action[3:6] = delta orientation (ignored for wave)
-            # action[6]   = gripper (ignored for wave)
+                # Current eef pose
+                current_pos  = np.array(state.O_T_EE[12:15])
+                T            = np.array(state.O_T_EE).reshape(4, 4, order='F')
+                current_rot  = Rotation.from_matrix(T[:3, :3])
 
-            # Current eef pose
-            current_pos = np.array(state.O_T_EE[12:15])
-            T = np.array(state.O_T_EE).reshape(4, 4, order='F')
-            current_quat = Rotation.from_matrix(T[:3, :3]).as_quat()  # [x,y,z,w]
-            q_current = np.array(state.q)
+                # Target eef pose
+                target_pos = current_pos + delta_pos
+                target_rot = Rotation.from_euler('xyz', delta_ori) * current_rot
 
-            # Target position
-            target_pos = current_pos + delta_pos
+                # Build 4x4 target transform
+                target_mat = np.eye(4)
+                target_mat[:3, :3] = target_rot.as_matrix()
+                target_mat[:3,  3] = target_pos
 
-            # Solve IK
-            target_joints = panda_py.ik(
-                position=target_pos.reshape(3, 1),
-                orientation=current_quat.reshape(4, 1),
-                q_init=q_current.reshape(7, 1)
-            )
-
-            # Send to robot
-            panda.move_to_joint_position(
-                [target_joints],
-                speed_factor=0.1
-            )
-
-            # Maintain frequency
-            elapsed    = time.time() - t_start
-            sleep_time = DT - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
-
-            if step % 20 == 0:
-                print(f"Step {step:3d}/{HORIZON} | delta_pos: {delta_pos.round(4)}")
+                # Send to Cartesian controller
+                controller.set_control(
+                    panda,
+                    position=target_pos,
+                    orientation=target_rot.as_quat()
+                )
 
     except KeyboardInterrupt:
-        print("\nStopped by user.")
+        print("Stopped")
 
     finally:
         print("\nGoing home.")
         panda.move_to_start()
-        print("Done!")
+        print("Done")
 
 
 if __name__ == "__main__":
