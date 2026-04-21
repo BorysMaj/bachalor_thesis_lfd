@@ -88,7 +88,7 @@ class KinestheticDemoRecorder:
         self.current_demo["obs"]["robot0_gripper_qpos"].append(gripper_qpos)
         self.current_demo["states"].append(np.concatenate([q, eef_pos, eef_quat, gripper_qpos]))
 
-        # Action = delta eef from previous step
+        """# Action = delta eef from previous step
         if self.prev_eef_pos is not None:
             delta_pos  = eef_pos - self.prev_eef_pos
             r_curr = Rotation.from_quat(eef_quat)
@@ -96,9 +96,9 @@ class KinestheticDemoRecorder:
             delta_ori = (r_curr * r_prev.inv()).as_euler('xyz')
             action = np.concatenate([delta_pos, delta_ori, gripper_cmd])  # (7,)
         else:
-            action = np.zeros(7)
+            action = np.zeros(7)"""
 
-        self.current_demo["actions"].append(action)
+        self.current_demo["actions"].append(q)
         self.prev_eef_pos  = eef_pos
         self.prev_eef_quat = eef_quat
 
@@ -139,6 +139,14 @@ class KinestheticDemoRecorder:
                 og = dg.create_group("obs")
                 for k, v in demo["obs"].items():
                     og.create_dataset(k, data=v)
+
+            # train/val split
+            n = len(self.demos)
+            names = [f"demo_{i}" for i in range(n)]
+            split = int(n * 0.8)
+            mg = f.create_group("mask")
+            mg.create_dataset("train", data=np.array(names[:split], dtype="S"))
+            mg.create_dataset("valid", data=np.array(names[split:], dtype="S"))
 
         print(f"Saved {len(self.demos)} demos to {path}")
 

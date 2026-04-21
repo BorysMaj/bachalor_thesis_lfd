@@ -11,7 +11,8 @@ import robomimic.utils.file_utils as FileUtils
 import robomimic.utils.torch_utils as TorchUtils
 
 ROBOT_IP = "172.16.0.2"
-POLICY_PATH = "/home/borys/Desktop/bachalor_thesis_lfd/models/wave/wave_bc_rnn/20260420144549/models/model_epoch_250.pth"
+POLICY_PATH = "/home/borys/Desktop/bachalor_thesis_lfd/models/extend_retract/bc_rnn/20260421141429/models/model_epoch_150.pth"
+#POLICY_PATH = "/home/borys/Desktop/bachalor_thesis_lfd/models/extend_retract/bc/20260421113223/models/model_epoch_500.pth"
 HORIZON = 200
 HZ = 20
 DT = 1.0 / HZ
@@ -58,7 +59,7 @@ def integrate_action(current_T, raw_action, action_scale):
     return target_pos, target_quat, gripper_cmd
 
 class GripperController:
-    """Debounces gripper commands so we don't spam open/close every step."""
+    """Gripper commands so we don't spam open/close every step."""
     def __init__(self, gripper):
         self.gripper = gripper
         self.is_open = True
@@ -111,7 +112,6 @@ def main():
 
             step = 0
             while ctx.ok():
-                t_start = time.time()
 
                 state = panda.get_state()
                 obs, current_T = get_obs(state)
@@ -121,21 +121,30 @@ def main():
 
                 raw_action = np.array(raw_action).flatten()
 
-                # Integrate delta to absolute target
+                """# Integrate delta to absolute target
                 target_pos, target_quat, gripper_cmd = integrate_action(
                     current_T, raw_action, ACTION_SCALE
-                )
+                )"""
+
+                # forward kinematics to get target eef pose
+                target_T = panda_py.fk(raw_action.reshape(7, 1))
+                target_pos = target_T[:3, 3]
+                target_quat = Rotation.from_matrix(target_T[:3, :3]).as_quat()
 
                 controller.set_control(
                     position=target_pos.reshape(3, 1),
                     orientation=target_quat.reshape(4, 1)
                 )
 
+                gripper_cmd = 1.0  # always open for extend/retract
+                gripper_ctrl.update(gripper_cmd)
+
                 # Log
-                print(
-                    f"[{step}] pos={obs['robot0_eef_pos'].round(3)}"
-                    f"delta pos={raw_action[:3].round(3)}  gripper={'open' if gripper_cmd > 0 else 'close'}"
-                )
+                if step % 20 == 0:
+                    print(
+                        f"[{step}] pos={obs['robot0_eef_pos'].round(3)},\n target_pos {target_pos}\n, raw_action {raw_action}\n"
+                        f"delta pos={raw_action[:3].round(3)}  gripper={'open' if gripper_cmd > 0 else 'close'}"
+                    )
                 step += 1
  
     except KeyboardInterrupt:

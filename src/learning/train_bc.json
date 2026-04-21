@@ -1,7 +1,7 @@
 {
     "algo_name": "bc",
     "experiment": {
-        "name": "wave_bc_rnn",
+        "name": "bc",
         "validate": true,
         "logging": {
             "terminal_output_to_txt": true,
@@ -23,14 +23,14 @@
         }
     },
     "train": {
-        "data": "/home/borys/Desktop/bachalor_thesis_lfd/data/wave/demos.hdf5",
-        "output_dir": "/home/borys/Desktop/bachalor_thesis_lfd/models/wave",
+        "data": "/home/borys/Desktop/bachalor_thesis_lfd/data/extend_retract",
+        "output_dir": "/home/borys/Desktop/bachalor_thesis_lfd/models/extend_retract",
         "num_data_workers": 0,
         "hdf5_cache_mode": "all",
         "hdf5_normalize_obs": true,
         "hdf5_filter_key": "train",
         "hdf5_validation_filter_key": "valid",
-        "seq_length": 10,
+        "seq_length": 1,
         "pad_seq_length": true,
         "frame_stack": 1,
         "dataset_keys": ["actions", "rewards", "dones"],
@@ -67,22 +67,10 @@
         },
         "actor_layer_dims": [512, 512],
         "rnn": {
-            "enabled": true,
-            "horizon": 10,
-            "hidden_dim": 400,
-            "rnn_type": "LSTM",
-            "num_layers": 2,
-            "open_loop": false,
-            "kwargs": {
-                "bidirectional": false
-            }
+            "enabled": false
         },
         "gmm": {
-            "enabled": true,
-            "num_modes": 5,
-            "min_std": 0.0001,
-            "std_activation": "softplus",
-            "low_noise_eval": true
+            "enabled": false
         },
         "gaussian": {
             "enabled": false
