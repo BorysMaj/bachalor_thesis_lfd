@@ -1,10 +1,13 @@
 import panda_py
 import panda_py.controllers
+from panda_py import libfranka
 import h5py
 import numpy as np
 import time
 import json
 from scipy.spatial.transform import Rotation
+
+GRIPPER_MAX_WIDTH = 0.08  # Hand fully open
 
 class KinestheticDemoRecorder:
     """
@@ -17,12 +20,14 @@ class KinestheticDemoRecorder:
         self.record_hz = record_hz
         self.dt = 1.0 / record_hz # Time between steps
         self.panda = None
+        self.gripper = None
         self.is_recording = False
         self.demos = []
 
 
     def connect(self):
         self.panda = panda_py.Panda(self.robot_ip)
+        self.gripper = libfranka.Gripper(self.robot_ip)
         print(f"Connected to Franka at {self.robot_ip}")
 
     def enable_teaching_mode(self):
@@ -45,7 +50,7 @@ class KinestheticDemoRecorder:
                 "robot0_joint_pos":    [], # 7 joint angles
                 "robot0_eef_pos":      [], # XYZ of hand
                 "robot0_eef_quat":     [], # Orientation of hand
-                "robot0_gripper_qpos": [], # Gripper open/close
+                "robot0_gripper_qpos": [],  # [left_finger, right_finger] each = width/2
             },
             "actions": [],
             "states":  [],
@@ -53,7 +58,7 @@ class KinestheticDemoRecorder:
         self.prev_eef_pos  = None
         self.prev_eef_quat = None
         self.is_recording  = True
-        print("Recording started — move the arm!")
+        print("Recording started")
 
     def record_step(self):
         """Read one state from the robot and store it."""
@@ -62,23 +67,33 @@ class KinestheticDemoRecorder:
 
         state = self.panda.get_state()
 
-        # Observations
+        # Arm observations
         q = np.array(state.q) # Joint angles
-        eef_pos = np.array(state.O_T_EE[12:15]) # XYZ from transform matrix
+        T = np.array(state.O_T_EE).reshape(4, 4, order='F')
+        eef_pos = T[:3, 3]
         eef_quat = self.mat2quat(state.O_T_EE) # Orientation
-        gripper = np.array([0.0, 0.0]) # Need to change -------------------------------------------
+
+        # Gripper observation
+        # GripperState with total gap
+        gripper_state = self.gripper.read_once()
+        width = gripper_state.width # total width in metres
+        gripper_qpos = np.array([width / 2, width / 2]) # width per-finger
+
+        # Gripper, normalise width to [-1, +1]
+        gripper_cmd = np.array([(width / GRIPPER_MAX_WIDTH) * 2.0 - 1.0])
 
         self.current_demo["obs"]["robot0_joint_pos"].append(q)
         self.current_demo["obs"]["robot0_eef_pos"].append(eef_pos)
         self.current_demo["obs"]["robot0_eef_quat"].append(eef_quat)
-        self.current_demo["obs"]["robot0_gripper_qpos"].append(gripper)
-        self.current_demo["states"].append(np.concatenate([q, eef_pos, eef_quat]))
+        self.current_demo["obs"]["robot0_gripper_qpos"].append(gripper_qpos)
+        self.current_demo["states"].append(np.concatenate([q, eef_pos, eef_quat, gripper_qpos]))
 
         # Action = delta eef from previous step
         if self.prev_eef_pos is not None:
             delta_pos  = eef_pos - self.prev_eef_pos
-            delta_ori  = eef_quat[:3] - self.prev_eef_quat[:3]
-            gripper_cmd = np.array([gripper[0]])
+            r_curr = Rotation.from_quat(eef_quat)
+            r_prev = Rotation.from_quat(self.prev_eef_quat)
+            delta_ori = (r_curr * r_prev.inv()).as_euler('xyz')
             action = np.concatenate([delta_pos, delta_ori, gripper_cmd])  # (7,)
         else:
             action = np.zeros(7)
@@ -98,7 +113,7 @@ class KinestheticDemoRecorder:
         }
 
         T = demo["actions"].shape[0]
-        print(f"Recorded {T} steps ({T/self.record_hz:.1f}s)")
+        print(f"Recorded {T} steps ({T/self.record_hz}s)")
         self.demos.append(demo)
         return demo
     
@@ -118,9 +133,9 @@ class KinestheticDemoRecorder:
                 dg  = grp.create_group(f"demo_{i}")
                 dg.attrs["num_samples"] = T
                 dg.create_dataset("actions", data=demo["actions"])
-                dg.create_dataset("states",  data=demo["states"])
+                dg.create_dataset("states", data=demo["states"])
                 dg.create_dataset("rewards", data=np.zeros(T))
-                dg.create_dataset("dones",   data=np.zeros(T))
+                dg.create_dataset("dones", data=np.zeros(T))
                 og = dg.create_group("obs")
                 for k, v in demo["obs"].items():
                     og.create_dataset(k, data=v)
@@ -130,7 +145,7 @@ class KinestheticDemoRecorder:
 
 
     def mat2quat(self, pose):
-    # Convert to 4x4 numpy matrix 
+        """Convert column-major 4x4 transform to xyzw quaternion."""
         T = np.array(pose).reshape(4, 4, order='F')  # column-major
         return Rotation.from_matrix(T[:3, :3]).as_quat()  # [x, y, z, w]
 

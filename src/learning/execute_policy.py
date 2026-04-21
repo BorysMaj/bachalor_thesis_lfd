@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import panda_py
 import panda_py.controllers
+from panda_py import libfranka
 import time
 import sys
 import os
@@ -16,21 +17,61 @@ HZ = 20
 DT = 1.0 / HZ
 ACTION_SCALE = 0.03  # Scaling for safety
 
+GRIPPER_MAX_WIDTH = 0.08   # Hand fully open
+GRIPPER_SPEED     = 0.05   # m/s
+GRIPPER_FORCE     = 20.0   # N
+GRIPPER_THRESHOLD = 0.0 
+
 
 def get_obs(state):
     """Convert robot state to policy observation."""
-    q = np.array(state.q)
-    eef_pos = np.array(state.O_T_EE[12:15])
     T = np.array(state.O_T_EE).reshape(4, 4, order='F')
+    eef_pos  = T[:3, 3]
     eef_quat = Rotation.from_matrix(T[:3, :3]).as_quat()
+    gripper_qpos = np.zeros(2)
 
-    return {
-        "robot0_joint_pos":    torch.tensor(q,          dtype=torch.float32).unsqueeze(0),
-        "robot0_eef_pos":      torch.tensor(eef_pos,    dtype=torch.float32).unsqueeze(0),
-        "robot0_eef_quat":     torch.tensor(eef_quat,   dtype=torch.float32).unsqueeze(0),
-        "robot0_gripper_qpos": torch.tensor([0.0, 0.0], dtype=torch.float32).unsqueeze(0),
+    obs = {
+        "robot0_eef_pos": eef_pos.astype(np.float32),
+        "robot0_eef_quat": eef_quat.astype(np.float32),
+        "robot0_joint_pos": np.array(state.q,  dtype=np.float32),
+        "robot0_joint_vel": np.array(state.dq, dtype=np.float32),
+        "robot0_gripper_qpos": gripper_qpos.astype(np.float32),
     }
+    return obs, T
 
+def integrate_action(current_T, raw_action, action_scale):
+    """
+    Integrate a 7D delta action 
+    onto the current EEF pose to produce an absolute Cartesian target.
+    """
+    delta_pos   = raw_action[:3] * action_scale
+    delta_euler = raw_action[3:6] * action_scale
+    gripper_cmd = float(raw_action[6])
+ 
+    current_pos = current_T[:3, 3]
+    current_rot = Rotation.from_matrix(current_T[:3, :3])
+ 
+    target_pos  = current_pos + delta_pos
+    target_rot  = Rotation.from_euler('xyz', delta_euler) * current_rot
+    target_quat = target_rot.as_quat()  # xyzw
+ 
+    return target_pos, target_quat, gripper_cmd
+
+class GripperController:
+    """Debounces gripper commands so we don't spam open/close every step."""
+    def __init__(self, gripper):
+        self.gripper = gripper
+        self.is_open = True
+ 
+    def update(self, gripper_cmd: float):
+        want_open = gripper_cmd > GRIPPER_THRESHOLD
+        if want_open and not self.is_open:
+            self.gripper.move(GRIPPER_MAX_WIDTH, GRIPPER_SPEED)
+            self.is_open = True
+        elif not want_open and self.is_open:
+            self.gripper.grasp(0.0, GRIPPER_SPEED, GRIPPER_FORCE,
+                               epsilon_inner=0.08, epsilon_outer=0.08)
+            self.is_open = False
 
 def main():
     # Load policy
@@ -47,6 +88,7 @@ def main():
     # Connect
     print(f"\nConnecting to Franka at {ROBOT_IP}")
     panda = panda_py.Panda(ROBOT_IP)
+    gripper = libfranka.Gripper(ROBOT_IP)
     print("Connected")
 
     # Go home
@@ -60,7 +102,8 @@ def main():
     print("Press Ctrl+C to stop")
 
     # Cartesian impedance controller
-    controller = panda_py.controllers.CartesianImpedance()
+    controller   = panda_py.controllers.CartesianImpedance()
+    gripper_ctrl = GripperController(gripper)
 
     try:
         with panda.create_context(frequency=HZ, max_runtime=HORIZON / HZ) as ctx:
@@ -68,40 +111,41 @@ def main():
 
             step = 0
             while ctx.ok():
+                t_start = time.time()
+
                 state = panda.get_state()
-                obs   = get_obs(state)
+                obs, current_T = get_obs(state)
 
-                with torch.no_grad():
-                    action = policy.policy.get_action(obs_dict=obs, goal_dict=None)
-                action = np.array(action).flatten()
+                # Policy inference
+                raw_action = policy(obs) 
 
-                delta_pos = action[:3] * ACTION_SCALE
-                delta_ori = action[3:6] * ACTION_SCALE
+                raw_action = np.array(raw_action).flatten()
 
-                current_pos = np.array(state.O_T_EE[12:15])
-                T = np.array(state.O_T_EE).reshape(4, 4, order='F')
-                current_rot = Rotation.from_matrix(T[:3, :3])
-
-                target_pos = current_pos + delta_pos
-                target_rot = Rotation.from_euler('xyz', delta_ori) * current_rot
+                # Integrate delta to absolute target
+                target_pos, target_quat, gripper_cmd = integrate_action(
+                    current_T, raw_action, ACTION_SCALE
+                )
 
                 controller.set_control(
                     position=target_pos.reshape(3, 1),
-                    orientation=target_rot.as_quat().reshape(4, 1)
+                    orientation=target_quat.reshape(4, 1)
                 )
 
-                if step % 20 == 0:
-                    print(f"Step {step:3d}/{HORIZON}, delta_pos: {delta_pos.round(4)}")
+                # Log
+                print(
+                    f"[{step}] pos={obs['robot0_eef_pos'].round(3)}"
+                    f"delta pos={raw_action[:3].round(3)}  gripper={'open' if gripper_cmd > 0 else 'close'}"
+                )
                 step += 1
-
+ 
     except KeyboardInterrupt:
         print("Stopped")
-
+ 
     finally:
         print("\nGoing home.")
         panda.move_to_start()
         print("Done")
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
