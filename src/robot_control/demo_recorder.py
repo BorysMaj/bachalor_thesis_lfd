@@ -106,14 +106,18 @@ class KinestheticDemoRecorder:
     def stop_recording(self):
         self.is_recording = False
 
-        demo = {
-            "actions": np.array(self.current_demo["actions"]),
-            "states":  np.array(self.current_demo["states"]),
-            "obs": {k: np.array(v) for k, v in self.current_demo["obs"].items()}
-        }
+        actions = np.array(self.current_demo["actions"])
+        states  = np.array(self.current_demo["states"])
+        obs     = {k: np.array(v) for k, v in self.current_demo["obs"].items()}
+
+        actions = actions[1:]
+        states = states[:-1] # Drop last state to fix allignment with actions 
+        obs = {k: v[:-1] for k, v in obs.items()} # Drop last obs to fix allignment actions
+
+        demo = {"actions": actions, "states": states, "obs": obs}
 
         T = demo["actions"].shape[0]
-        print(f"Recorded {T} steps ({T/self.record_hz}s)")
+        print(f"Recorded {T} steps ({T/self.record_hz:.1f}s)")
         self.demos.append(demo)
         return demo
     
