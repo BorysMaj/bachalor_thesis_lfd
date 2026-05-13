@@ -1,19 +1,18 @@
 """
-Test the custom PushTask environment.
+Test the custom ReachTask environment.
 Run from src/simulation/:
-    python test_push_env.py
+    python test_reach_env.py
 """
 
 import numpy as np
 import robosuite as suite
 from robosuite.controllers import load_composite_controller_config
-from push_env import PushTask  # registers via @register_env
+from reach_env import ReachTask  # registers via @register_env
 
-# Use robosuite 1.5+ composite controller loader
 controller_config = load_composite_controller_config(robot="Panda")
 
 env = suite.make(
-    "PushTask",
+    "ReachTask",
     robots="Panda",
     controller_configs=controller_config,
     has_renderer=True,
@@ -27,8 +26,8 @@ env = suite.make(
 
 obs = env.reset()
 print("Obs keys:", list(obs.keys()))
-print("box_pos:", obs.get("box_pos", "not found"))
-print("box_to_goal:", obs.get("box_to_goal", "not found"))
+print("target_pos:  ", obs.get("target_pos", "not found"))
+print("eef_to_target:", obs.get("eef_to_target", "not found"))
 
 low, high = env.action_spec
 
@@ -38,7 +37,8 @@ for step in range(300):
     env.render()
 
     if step % 50 == 0:
-        print(f"[{step}] reward={reward:.3f}  success={env._check_success()}")
+        print(f"[{step}] reward={reward:.4f}  success={env._check_success()}"
+              f"  dist={-reward:.4f}m")
 
     if done:
         print("Episode done, resetting")
