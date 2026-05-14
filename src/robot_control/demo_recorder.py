@@ -41,6 +41,11 @@ class KinestheticDemoRecorder:
         self.panda.teaching_mode(False)
         print("Teaching mode OFF")
 
+    def get_possition(self):
+        state = self.panda.get_state()
+        T = np.array(state.O_T_EE).reshape(4,4, order='F')
+        print("Current possition =", T[:3, 3])
+
 
     # Recording
 
