@@ -40,6 +40,7 @@ def main():
         print(f"Task: {task_name} | Demos recorded: {len(recorder.demos)}")
         print("[r] Record new demo")
         print("[h] Go home")
+        print("[m] Measure a position")
         print("[s] Save and quit")
         print("[q] Quit without saving")
 
@@ -80,6 +81,19 @@ def main():
         # Go home
         elif choice == "h":
             print("Moving to home.")
+            recorder.move_to_home()
+
+        # Measure
+        if choice == "m":
+            print("Let's measure.")
+
+            input("Press Enter to enable free move.")
+            recorder.enable_teaching_mode()
+
+            input("Press Enter when the End-Effector is in chosen possition.")
+            recorder.disable_teaching_mode()
+
+            recorder.get_possition()
             recorder.move_to_home()
 
         # Save
