@@ -9,6 +9,7 @@ Usage:
 
     env = suite.make("ReachTask", robots="Panda", has_renderer=True, ...)
 """
+import xml.etree.ElementTree as ET
 
 import numpy as np
 from robosuite.environments.manipulation.manipulation_env import ManipulationEnv
@@ -46,7 +47,7 @@ class ReachTask(ManipulationEnv):
         use_camera_obs=False,
         use_object_obs=True,
         reward_shaping=True,
-        reach_threshold=0.05, # success if eef within 5 cm of target
+        reach_threshold=0.05,           # success if eef within 5 cm of target
         placement_initializer=None,
         has_renderer=False,
         has_offscreen_renderer=False,
@@ -76,6 +77,7 @@ class ReachTask(ManipulationEnv):
         self.reward_shaping = reward_shaping
 
         self.use_object_obs = use_object_obs
+
 
         self.placement_initializer = placement_initializer
 
@@ -125,36 +127,25 @@ class ReachTask(ManipulationEnv):
         )
         mujoco_arena.set_origin([0, 0, 0])
 
-        # Small bright green target block — easy to see, easy to touch
-        self.target = BoxObject(
-            name="target",
-            size_min=(0.02, 0.02, 0.02),
-            size_max=(0.02, 0.02, 0.02),
-            rgba=[0.2, 0.9, 0.2, 1],
-            rng=self.rng,
-        )
+        # Sample a random target XY position each episode
+        tx = self.rng.uniform(-0.15, 0.15) + self.table_offset[0]
+        ty = self.rng.uniform(-0.15, 0.15) + self.table_offset[1]
+        tz = self.table_offset[2] + 0.1
 
-        if self.placement_initializer is not None:
-            self.placement_initializer.reset()
-            self.placement_initializer.add_objects(self.target)
-        else:
-            self.placement_initializer = UniformRandomSampler(
-                name="ObjectSampler",
-                mujoco_objects=self.target,
-                x_range=[-0.15, 0.15],
-                y_range=[-0.15, 0.15],
-                rotation=None,
-                ensure_object_boundary_in_range=False,
-                ensure_valid_placement=True,
-                reference_pos=self.table_offset,
-                z_offset=0.01,
-                rng=self.rng,
-            )
+        self._target_pos = np.array([tx, ty, tz])
+
+        # Semi-transparent sphere - reach the EEF into this
+        sphere_site = ET.SubElement(mujoco_arena.worldbody, "site")
+        sphere_site.set("name", "reach_target")
+        sphere_site.set("pos", f"{tx} {ty} {tz}")
+        sphere_site.set("size", f"{self.reach_threshold}")
+        sphere_site.set("type", "sphere")
+        sphere_site.set("rgba", "0.2 0.9 0.2 0.4")
 
         self.model = ManipulationTask(
             mujoco_arena=mujoco_arena,
             mujoco_robots=[robot.robot_model for robot in self.robots],
-            mujoco_objects=self.target,
+            mujoco_objects=[],
         )
 
 
@@ -162,20 +153,12 @@ class ReachTask(ManipulationEnv):
 
     def _setup_references(self):
         super()._setup_references()
-        self.target_body_id = self.sim.model.body_name2id(self.target.root_body)
 
 
     # Reset
 
     def _reset_internal(self):
         super()._reset_internal()
-        if not self.deterministic_reset:
-            object_placements = self.placement_initializer.sample()
-            for obj_pos, obj_quat, obj in object_placements.values():
-                self.sim.data.set_joint_qpos(
-                    obj.joints[0],
-                    np.concatenate([np.array(obj_pos), np.array(obj_quat)])
-                )
 
 
     # Reward
@@ -185,13 +168,13 @@ class ReachTask(ManipulationEnv):
             return 1.0
 
         if self.reward_shaping:
-            dist = self._gripper_to_target(
-                gripper=self.robots[0].gripper,
-                target=self.target.root_body,
-                target_type="body",
-                return_distance=True,
-            )
-            return -dist # closer = higher reward (less negative)
+            eef_pos = np.array(self.sim.data.site_xpos[
+                self.robots[0].eef_site_id["right"]
+                if isinstance(self.robots[0].eef_site_id, dict)
+                else self.robots[0].eef_site_id
+            ])
+            dist = np.linalg.norm(eef_pos - self._target_pos)
+            return -dist
 
         return 0.0
 
@@ -199,12 +182,12 @@ class ReachTask(ManipulationEnv):
     # Success check
     
     def _check_success(self):
-        dist = self._gripper_to_target(
-            gripper=self.robots[0].gripper,
-            target=self.target.root_body,
-            target_type="body",
-            return_distance=True,
-        )
+        eef_pos = np.array(self.sim.data.site_xpos[
+            self.robots[0].eef_site_id["right"]
+            if isinstance(self.robots[0].eef_site_id, dict)
+            else self.robots[0].eef_site_id
+        ])
+        dist = np.linalg.norm(eef_pos - self._target_pos)
         return bool(dist < self.reach_threshold)
 
 
@@ -218,17 +201,16 @@ class ReachTask(ManipulationEnv):
 
             @sensor(modality=modality)
             def target_pos(obs_cache):
-                return np.array(self.sim.data.body_xpos[self.target_body_id])
+                return self._target_pos.copy()
 
             @sensor(modality=modality)
             def eef_to_target(obs_cache):
-                target = np.array(self.sim.data.body_xpos[self.target_body_id])
                 eef = np.array(self.sim.data.site_xpos[
                     self.robots[0].eef_site_id["right"]
                     if isinstance(self.robots[0].eef_site_id, dict)
                     else self.robots[0].eef_site_id
                 ])
-                return target - eef
+                return self._target_pos - eef
 
             for s in [target_pos, eef_to_target]:
                 observables[s.__name__] = Observable(

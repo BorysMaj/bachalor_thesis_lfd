@@ -132,7 +132,7 @@ class KinestheticDemoRecorder:
         if not self.is_recording:
             return 999.0
 
-        q, eef_pos, eef_quat, gripper_qpos, gripper_cmd = self._read_robot_state()
+        q, eef_pos, eef_quat, gripper_qpos, gripper_cmd = self.read_robot_state()
 
         eef_to_target = self._reach_target - eef_pos
         dist = float(np.linalg.norm(eef_to_target))

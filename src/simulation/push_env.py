@@ -11,6 +11,7 @@ Usage:
     # Register and create
     env = suite.make("PushTask", robots="Panda", has_renderer=True, ...)
 """
+import xml.etree.ElementTree as ET
 
 import numpy as np
 from robosuite.environments.manipulation.manipulation_env import ManipulationEnv
@@ -115,7 +116,7 @@ class PushTask(ManipulationEnv):
     def _load_model(self):
         super()._load_model()
 
-        # Position robot at table edge (matches Lift pattern)
+        # Position robot at table edge
         xpos = self.robots[0].robot_model.base_xpos_offset["table"](self.table_full_size[0])
         self.robots[0].robot_model.set_base_xpos(xpos)
 
@@ -125,6 +126,18 @@ class PushTask(ManipulationEnv):
             table_offset=self.table_offset,
         )
         mujoco_arena.set_origin([0, 0, 0])
+
+
+        # Visual goal marker
+        goal_x = self.table_offset[0] + self.goal_offset[0]
+        goal_y = self.table_offset[1] + self.goal_offset[1]
+        goal_z = self.table_offset[2]
+        goal_site = ET.SubElement(mujoco_arena.worldbody, "site")
+        goal_site.set("name", "goal_marker")
+        goal_site.set("pos", f"{goal_x} {goal_y} {goal_z}")
+        goal_site.set("size", f"{self.goal_threshold} {self.goal_threshold} 0.001")
+        goal_site.set("type", "cylinder")
+        goal_site.set("rgba", "0.2 0.9 0.2 0.6")
 
         self.box = BoxObject(
             name="box",
@@ -171,7 +184,7 @@ class PushTask(ManipulationEnv):
         ])
 
 
-    # 3. Reset — place box randomly each episode
+    # Reset
     
     def _reset_internal(self):
         super()._reset_internal()
