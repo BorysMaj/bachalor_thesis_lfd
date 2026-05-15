@@ -1,21 +1,25 @@
 """
-Robot LfD UI — Streamlit interface for demo recording, training, and policy execution.
+Robot LfD UI - Streamlit interface for demo recording, training, and policy execution.
 Run with: streamlit run ui.py
 """
 
 import streamlit as st
 import subprocess
 import threading
+import queue
 import time
 import os
 import glob
 import json
 from pathlib import Path
 
+# Log buffer - background threads write here, main thread drains it
+_log_queue: queue.Queue = queue.Queue()
+
 # Config
 ROBOT_IP      = "172.16.0.2"
-DEMOS_DIR     = Path("~/demos").expanduser()
-MODELS_DIR    = Path("~/models").expanduser()
+DEMOS_DIR     = Path("data").expanduser()
+MODELS_DIR    = Path("models").expanduser()
 RECORDER_PATH = Path(__file__).parent / "src/robot_control/demo_recorder.py"
 EXECUTE_PATH  = Path(__file__).parent / "src/learning/execute_policy.py"
 
@@ -38,8 +42,26 @@ def init_state():
             st.session_state[k] = v
 
 def log(msg: str):
+    """Log a message."""
     timestamp = time.strftime("%H:%M:%S")
-    st.session_state.log.append(f"[{timestamp}] {msg}")
+    entry = f"[{timestamp}] {msg}"
+    try:
+        # Works when called from the main Streamlit thread
+        st.session_state.log.append(entry)
+        if len(st.session_state.log) > 100:
+            st.session_state.log = st.session_state.log[-100:]
+    except Exception:
+        # Called from a background thread — queue it for the main thread
+        _log_queue.put(entry)
+
+def drain_log_queue():
+    """Drain queued log messages into session state. Call at the top of main()."""
+    while not _log_queue.empty():
+        try:
+            entry = _log_queue.get_nowait()
+            st.session_state.log.append(entry)
+        except queue.Empty:
+            break
     if len(st.session_state.log) > 100:
         st.session_state.log = st.session_state.log[-100:]
 
@@ -72,6 +94,7 @@ def run_in_thread(fn, *args):
 # Main UI
 def main():
     init_state()
+    drain_log_queue()
 
     st.set_page_config(
         page_title="Robot LfD",
@@ -212,12 +235,12 @@ def main():
                         rec  = st.session_state.recorder
                         demo = rec.stop_recording()
                         rec.disable_teaching_mode()
-                        T    = demo["actions"].shape[0]
+                        T = demo["actions"].shape[0]
 
                         # Save to HDF5
                         save_path = DEMOS_DIR / st.session_state.current_task / "demos.hdf5"
                         rec.save(str(save_path), task_name=st.session_state.current_task)
-                        log(f"Saved demo — {T} steps ({T/20:.1f}s) → {save_path}")
+                        log(f"Saved demo - {T} steps ({T/20:.1f}s) → {save_path}")
                         st.session_state.recorder = None
                     except Exception as e:
                         log(f"Stop recording error: {e}")
@@ -234,7 +257,7 @@ def main():
             st.warning("Select a task first.")
         else:
             n_demos = get_demo_count(st.session_state.current_task)
-            st.markdown(f"**Task:** `{st.session_state.current_task}` — {n_demos} demos")
+            st.markdown(f"**Task:** `{st.session_state.current_task}` - {n_demos} demos")
 
             if n_demos < 5:
                 st.warning(f"Only {n_demos} demos. Recommend at least 20 before training.")
@@ -256,7 +279,7 @@ def main():
 
                 def train():
                     st.session_state.training = True
-                    log(f"Training started — {n_epochs} epochs")
+                    log(f"Training started - {n_epochs} epochs")
                     cmd = [
                         "python", "-u", "-m", "robomimic.scripts.train",
                         "--dataset", str(dataset_path),
@@ -308,7 +331,7 @@ def main():
 
             col1, col2 = st.columns(2)
             with col1:
-                horizon = st.number_input("Horizon (steps)", value=200, min_value=50)
+                horizon = st.number_input("Horizon (steps)", value=200, min_value=50, step=5)
             with col2:
                 action_scale = st.slider("Action scale", 0.1, 2.0, 1.0, 0.1)
 
@@ -358,7 +381,7 @@ def main():
                         log("Execution rated: GOOD")
                 with col_bad:
                     if st.button("👎 Bad"):
-                        log("Execution rated: BAD — consider adding more demos")
+                        log("Execution rated: BAD - consider adding more demos")
 
     # LOG tab
     with tab_log:
